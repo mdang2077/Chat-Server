@@ -1,30 +1,86 @@
-# Chat-Server
-A basic HTTP server that handles chat messages and reactions.
+# Chat Server
 
-# Data Structures
-1. Post: Contains message ID, username, message content, timestamp, and reactions
-2. Reaction: Stores user and message for reactions to chats
+A lightweight HTTP chat server written in C. Supports posting messages, reacting to them, editing them, and viewing the full chat history — all over plain HTTP.
 
-# Routes
-http://localhost:<port>...
-1. /chats
- A request which responds with the plain text rendering of all the current chats.
+## Requirements
+- GCC with C11 support
+- macOS or Linux
+- `make`
 
-2. /post?user=<username>&message=<message>
-This creates a new chat with a username and a message
+## Build
+```bash
+make clean && make
+```
+This produces a `chat-server` binary in the project root.
 
-3. /react?user=<username>&message=<reaction>&id=<id>
-This creates a new reaction for an existing chat with a given message
+## Run
+```bash
+./chat-server <port>
+```
+If no port is provided, the OS assigns one automatically. The assigned port is printed on startup:
+```
+Server started on port 8080
+```
 
-4. /edit?id=<id>&message=<message>
-Allows the user to edit an existing message in the chat server
+## API Reference
+All requests are plain HTTP GET. Replace `<port>` with the port the server is running on.
 
-5. /reset
-Resets the chat server to have no chats or reactions
+### GET `/chats`
+Returns all current chats and their reactions as plain text.
+```
+http://localhost:<port>/chats
+```
+Response format:
+```
+[#<id> <timestamp>]      <username>: <message>
+      (<user>)  <reaction>
+```
 
-# How to use
-1. Clone or download the repository
-2. Open the folder
-3. Run "make clean" and then "make" 
-4. Run "./chat-server <port>" or "./chat-server"
-5. Open a browser and enter "http://localhost:<port>/<request>
+### GET `/post?user=<username>&message=<message>`
+Creates a new chat message.
+```
+http://localhost:<port>/post?user=alice&message=hello
+```
+| Parameter | Max Length | Required |
+|-----------|-----------|----------|
+| `user`    | 15 chars  | Yes      |
+| `message` | 255 chars | Yes      |
+
+Returns 400 if parameters are missing, empty, or exceed limits. Supports up to 100,000 total messages.
+
+### GET `/react?user=<username>&message=<reaction>&id=<id>`
+Adds a reaction to an existing message by its ID.
+```
+http://localhost:<port>/react?user=bob&message=+1&id=3
+```
+| Parameter  | Max Length    | Required |
+|------------|---------------|----------|
+| `user`     | 15 chars      | Yes      |
+| `message`  | 15 chars      | Yes      |
+| `id`       | valid chat ID | Yes      |
+
+Returns 400 if the ID is invalid or any field is missing/out of range. Each message supports up to 100 reactions.
+
+### GET `/edit?id=<id>&message=<message>`
+Replaces the content of an existing message.
+```
+http://localhost:<port>/edit?id=2&message=updated+text
+```
+| Parameter | Max Length    | Required |
+|-----------|---------------|----------|
+| `id`      | valid chat ID | Yes      |
+| `message` | 255 chars     | Yes      |
+
+Returns 400 if the ID does not exist or the message is empty/too long.
+
+### GET `/reset`
+Deletes all messages and reactions, resetting the server to its initial state.
+```
+http://localhost:<port>/reset
+```
+Returns 200 OK with an empty body on success.
+
+## Notes
+- Usernames and reactions are URL-decoded, so `%20` becomes a space.
+- Chat IDs are assigned sequentially starting at 1.
+- Timestamps are recorded at the time of posting in local time (`YYYY-MM-DD HH:MM:SS`).

@@ -6,7 +6,7 @@
 
 char const* HTTP_200_OK = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n";
 char const* HTTP_404 = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n";
-char const* HTTP_500 = "HTTP500\n";
+char const* HTTP_500 = "HTTP/1.1 500 Internal Server\r\nContent-Type: text/plain\r\n\r\n";
 char const* HTTP_400 = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\n";
 
 static const int USERNAME_SIZE = 15;
@@ -146,7 +146,7 @@ void handle_post(char* path, int client_socket)
 {
 	if (global_id  >= 100000)
 	{
-		write(client_socket, HTTP_404, strlen(HTTP_404));
+		write(client_socket, HTTP_400, strlen(HTTP_400));
 		return;
 	}	
 	char username[USERNAME_SIZE * 4];
@@ -182,8 +182,8 @@ void handle_post(char* path, int client_socket)
 void handle_edit(char* path, int client_socket)
 {
 	char message[MESSAGE_SIZE * 4];
-	char id[CHAT_LIMIT];
-	int result = sscanf(path, "/edit?id=%59[^&]&message=%255s", id, message);
+	char id[12];
+	int result = sscanf(path, "/edit?id=%11[^&]&message=%1019s", id, message);
 	int IDnum = atoi(id);
 
 	if (IDnum > global_id || IDnum <= 0 || strlen(id) == 0 || result < 2)
@@ -213,17 +213,21 @@ void handle_reaction(char* path, int client_socket)
 {
 	char username[USERNAME_SIZE * 4];
 	char reaction[REACTION_SIZE * 4];
-	char id[CHAT_LIMIT];
-	int result = sscanf(path, "/react?user=%59[^&]&message=%59[^&]&id=%254s", username, reaction, id);
+	char id[12];
+	int result = sscanf(path, "/react?user=%59[^&]&message=%59[^&]&id=%11s", username, reaction, id);
+	if (result < 3) {
+		write(client_socket, HTTP_400, strlen(HTTP_400));
+		return;
+	}
 	int IDnum = atoi(id);
-	if (IDnum > global_id || IDnum <= 0 || strlen(id) == 0)
+	if (IDnum > global_id || IDnum <= 0)
 	{
 		write(client_socket, HTTP_400, strlen(HTTP_400));
 		return;
 	}
 	if (chats[IDnum].num_reactions >= 100)
 	{
-		write(client_socket, HTTP_404, strlen(HTTP_404));
+		write(client_socket, HTTP_400, strlen(HTTP_400));
 		return;
 	}
 	char decoded_username[USERNAME_SIZE * 4];
@@ -250,6 +254,18 @@ void handle_reaction(char* path, int client_socket)
 
 void handle_reset(char* path, int client_socket)
 {
+	for (int i = 1; i <= global_id; i++)                                                                                                                                
+	{                                                                                                                                                                   
+		free(chats[i].username);                                                                                                                                          
+		free(chats[i].message);                                                                                                                                           
+		free(chats[i].timestamp);                                                                                                                                         
+		for (int j = 1; j <= (int)chats[i].num_reactions; j++)                                                                                                            
+		{                                                                                                                                                                 
+			free(chats[i].reactions[j].user);                                                                                                                               
+			free(chats[i].reactions[j].message);                                                                                                                            
+		}                                                                                                                                                                 
+		free(chats[i].reactions);                                                                                                                                         
+	}
 	free(chats);
 	chats = NULL;
 	global_id = 0;
