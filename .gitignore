@@ -1,0 +1,6 @@
+# Build outputs
+chat-server
+functions
+*.dSYM/
+*.dSYM.zip
+*.o

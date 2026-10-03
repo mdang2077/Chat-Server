@@ -1,11 +1,12 @@
+CC = gcc
+CFLAGS = -std=c11 -Wall -Wextra -g -fsanitize=address
+
 all: chat-server
 
-functions: functions.c
-	gcc -std=c11 -Wall -Wno-unused-variable -fsanitize=address -g functions.c -o functions
-chat-server: chat-server.c http-server.c
-	gcc -std=c11 -Wall -Wno-unused-variable -fsanitize=address -g chat-server.c http-server.c -o chat-server
+chat-server: chat-server.c http-server.c http-server.h
+	$(CC) $(CFLAGS) chat-server.c http-server.c -o chat-server
 
 clean:
-	rm -f chat-server
-	rm -f functions
+	rm -rf chat-server chat-server.dSYM
 
+.PHONY: all clean

@@ -9,7 +9,7 @@ void start_server(void(*handler)(char*, int), int port) {
     
 
     // Create a socket
-    if ((server_sock = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    if ((server_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }

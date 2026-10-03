@@ -2,6 +2,15 @@
 
 A lightweight HTTP chat server written in C. Supports posting messages, reacting to them, editing them, and viewing the full chat history — all over plain HTTP.
 
+## Project Layout
+| File | Purpose |
+|------|---------|
+| `chat-server.c` | Request routing, query parsing, URL decoding, and chat/reaction storage |
+| `http-server.c` / `http-server.h` | Minimal TCP server: binds a port, accepts connections, hands each request to a handler |
+| `Makefile` | Builds with `-Wall -Wextra` and AddressSanitizer enabled |
+
+Chats and reactions live in dynamically grown arrays, and all memory is freed on `/reset`.
+
 ## Requirements
 - GCC with C11 support
 - macOS or Linux
@@ -64,7 +73,7 @@ Returns 400 if the ID is invalid or any field is missing/out of range. Each mess
 ### GET `/edit?id=<id>&message=<message>`
 Replaces the content of an existing message.
 ```
-http://localhost:<port>/edit?id=2&message=updated+text
+http://localhost:<port>/edit?id=2&message=updated%20text
 ```
 | Parameter | Max Length    | Required |
 |-----------|---------------|----------|
@@ -81,6 +90,8 @@ http://localhost:<port>/reset
 Returns 200 OK with an empty body on success.
 
 ## Notes
-- Usernames and reactions are URL-decoded, so `%20` becomes a space.
+- This is a learning project, not a production server. It has no authentication, and every endpoint uses GET for simplicity, including the ones that change state (`/post`, `/react`, `/edit`, `/reset`). A real API would use POST/PUT/DELETE for these and require auth.
+- Requests are handled one at a time on a single thread, so there is no shared-state concurrency.
+- All parameters are URL-decoded, so `%20` becomes a space. A `%` that isn't followed by two hex digits is kept as-is, and `+` is not treated as a space.
 - Chat IDs are assigned sequentially starting at 1.
 - Timestamps are recorded at the time of posting in local time (`YYYY-MM-DD HH:MM:SS`).
