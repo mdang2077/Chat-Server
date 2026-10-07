@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <signal.h>
 
 char const* HTTP_200_OK = "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n";
 char const* HTTP_400 = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n\r\n";
@@ -19,6 +20,7 @@ enum {
 	ID_SIZE = 12,
 	// Raw query values may be percent-encoded, so allow room for "%XX" escapes.
 	RAW_FACTOR = 4,
+	OUTPUT_BUFFER_SIZE = 64 * 1024,
 };
 
 typedef struct {
@@ -38,10 +40,25 @@ typedef struct {
 // Chat IDs start at 1, so chats[0] is unused and chats[id] is the chat with that ID.
 static Chat* chats = NULL;
 static int num_chats = 0;
+static int chat_capacity = 0;
+
+// Writes all of buf, retrying short writes. Returns 0 if the client went away.
+static int write_all(int client, char const* buf, size_t len)
+{
+	while (len > 0) {
+		ssize_t written = write(client, buf, len);
+		if (written <= 0) {
+			return 0;
+		}
+		buf += written;
+		len -= (size_t)written;
+	}
+	return 1;
+}
 
 static void respond(int client, char const* response)
 {
-	write(client, response, strlen(response));
+	write_all(client, response, strlen(response));
 }
 
 static char* copy_string(char const* src)
@@ -100,11 +117,19 @@ static int parse_chat_id(char const* s)
 
 static int add_chat(char const* username, char const* message)
 {
-	Chat* grown = realloc(chats, sizeof(Chat) * (num_chats + 2));
-	if (grown == NULL) {
-		return 0;
+	// Grow geometrically so filling to CHAT_LIMIT costs O(n) copying, not O(n^2).
+	if (num_chats + 2 > chat_capacity) {
+		int capacity = chat_capacity == 0 ? 16 : chat_capacity * 2;
+		if (capacity > CHAT_LIMIT + 1) {
+			capacity = CHAT_LIMIT + 1;
+		}
+		Chat* grown = realloc(chats, sizeof(Chat) * capacity);
+		if (grown == NULL) {
+			return 0;
+		}
+		chats = grown;
+		chat_capacity = capacity;
 	}
-	chats = grown;
 
 	Chat* chat = &chats[num_chats + 1];
 	chat->username = copy_string(username);
@@ -145,22 +170,59 @@ static int add_reaction(int id, char const* username, char const* message)
 	return 1;
 }
 
+// Batches lines into large writes instead of one syscall per line.
+typedef struct {
+	int client;
+	size_t len;
+	int ok;
+	char data[OUTPUT_BUFFER_SIZE];
+} Output;
+
+static void output_flush(Output* out)
+{
+	if (out->ok && out->len > 0) {
+		out->ok = write_all(out->client, out->data, out->len);
+	}
+	out->len = 0;
+}
+
+// len is snprintf's return value; size is the buffer it wrote into.
+static void output_line(Output* out, char const* line, int len, size_t size)
+{
+	if (len < 0) {
+		return;
+	}
+	if ((size_t)len >= size) {
+		len = (int)(size - 1);  // snprintf truncated the line
+	}
+	if (out->len + (size_t)len > sizeof(out->data)) {
+		output_flush(out);
+	}
+	memcpy(out->data + out->len, line, (size_t)len);
+	out->len += (size_t)len;
+}
+
 static void respond_with_chats(int client)
 {
+	static Output out;
 	char line[USERNAME_SIZE + MESSAGE_SIZE + TIMESTAMP_SIZE + 32];
 
-	respond(client, HTTP_200_OK);
-	for (int i = 1; i <= num_chats; i++) {
+	out.client = client;
+	out.len = 0;
+	out.ok = 1;
+	output_line(&out, HTTP_200_OK, (int)strlen(HTTP_200_OK), strlen(HTTP_200_OK) + 1);
+	for (int i = 1; i <= num_chats && out.ok; i++) {
 		Chat* chat = &chats[i];
-		snprintf(line, sizeof(line), "[#%u %s]\t%s: %s\n",
+		int len = snprintf(line, sizeof(line), "[#%u %s]\t%s: %s\n",
 			chat->id, chat->timestamp, chat->username, chat->message);
-		respond(client, line);
+		output_line(&out, line, len, sizeof(line));
 		for (uint32_t j = 0; j < chat->num_reactions; j++) {
-			snprintf(line, sizeof(line), "\t\t\t(%s)  %s\n",
+			len = snprintf(line, sizeof(line), "\t\t\t(%s)  %s\n",
 				chat->reactions[j].user, chat->reactions[j].message);
-			respond(client, line);
+			output_line(&out, line, len, sizeof(line));
 		}
 	}
+	output_flush(&out);
 }
 
 // /post?user=<username>&message=<message>
@@ -274,6 +336,7 @@ static void handle_reset(int client)
 	free(chats);
 	chats = NULL;
 	num_chats = 0;
+	chat_capacity = 0;
 	respond(client, HTTP_200_OK);
 }
 
@@ -305,6 +368,9 @@ static void handle_request(char* request, int client)
 
 int main(int argc, char** argv)
 {
+	// A client that disconnects mid-response would otherwise kill the server via SIGPIPE.
+	signal(SIGPIPE, SIG_IGN);
+
 	int port = 0;
 	if (argc >= 2) {
 		port = atoi(argv[1]);

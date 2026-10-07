@@ -55,7 +55,7 @@ http://localhost:<port>/post?user=alice&message=hello
 | `user`    | 15 chars  | Yes      |
 | `message` | 255 chars | Yes      |
 
-Returns 400 if parameters are missing, empty, or exceed limits. Supports up to 100,000 total messages.
+Returns 400 if parameters are missing, empty, or exceed limits. Stores up to 100,000 messages; the 100,001st post returns 400 (see [Limits](#limits)).
 
 ### GET `/react?user=<username>&message=<reaction>&id=<id>`
 Adds a reaction to an existing message by its ID.
@@ -89,9 +89,33 @@ http://localhost:<port>/reset
 ```
 Returns 200 OK with an empty body on success.
 
+## Limits
+The server stores at most 100,000 messages (`CHAT_LIMIT`) and 100 reactions per message (`MAX_REACTIONS`). The cap exists to bound memory and response size, since everything is held in RAM and `/post`, `/react`, `/edit`, and `/chats` all return the full history.
+
+**Worst-case math at the cap (max-length messages, no reactions):**
+| Item | Per message | × 100,000 |
+|------|-------------|-----------|
+| `Chat` struct (56 B) + username (≤16 B) + message (≤256 B) | ≤328 B | ~33 MB heap |
+| One line of `/chats` output | ≤303 B | ~30 MB response |
+
+Reactions are the expensive case. 100 reactions on every message adds ~48 B each in memory (16 B struct + two ≤16 B strings) and a ~38 B output line each, so a fully saturated server reaches ~480 MB of heap and a ~410 MB `/chats` response.
+
+**Measured** (macOS, Apple Silicon, default AddressSanitizer build): 100,000 posts of 255-character messages through `/post`, reading every response in full:
+| Messages stored | Response size | Server RSS |
+|-----------------|---------------|------------|
+| 10,000  | 3.0 MB  | 7 MB  |
+| 50,000  | 15.0 MB | 24 MB |
+| 100,000 | 30.1 MB | 46 MB |
+
+- Post #100,001 returned `400 Bad Request`.
+- A `/chats` call at the cap returned all 100,000 lines (30.1 MB) in 0.06 s.
+- The full fill took ~51 minutes. Each `/post` re-sends the whole history, so total work grows quadratically with the number of messages. It's slow to fill but well within memory.
+
 ## Notes
 - This is a learning project, not a production server. It has no authentication, and every endpoint uses GET for simplicity, including the ones that change state (`/post`, `/react`, `/edit`, `/reset`). A real API would use POST/PUT/DELETE for these and require auth.
 - Requests are handled one at a time on a single thread, so there is no shared-state concurrency.
+- `SIGPIPE` is ignored, so a client that disconnects partway through a large response doesn't take the server down.
+- Possible improvement: `/post`, `/react`, and `/edit` return the entire chat history, which makes filling the server O(n²) (~51 minutes to reach 100,000 messages). Returning only the affected message would make each request O(1) and leave `/chats` as the one full-history endpoint. It's not done here because it changes the API's response format.
 - All parameters are URL-decoded, so `%20` becomes a space. A `%` that isn't followed by two hex digits is kept as-is, and `+` is not treated as a space.
 - Chat IDs are assigned sequentially starting at 1.
 - Timestamps are recorded at the time of posting in local time (`YYYY-MM-DD HH:MM:SS`).
